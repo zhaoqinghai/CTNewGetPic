@@ -121,7 +121,9 @@ namespace CTNewGetPic
 
         public void Start()
         {
-            new Thread(async () =>
+            if (Interlocked.CompareExchange(ref _started, 1, 0) == 0)
+            {
+                new Thread(async () =>
             {
                 var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
                 do
@@ -142,11 +144,15 @@ namespace CTNewGetPic
                 }
                 while (await timer.WaitForNextTickAsync(_cts.Token));
             }).Start();
+            }
         }
 
         public void Stop()
         {
-            _cts.Cancel();
+            if (Interlocked.CompareExchange(ref _started, 0, 1) == 1)
+            {
+                _cts.Cancel();
+            }
         }
     }
 
