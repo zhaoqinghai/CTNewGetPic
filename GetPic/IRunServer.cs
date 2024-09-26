@@ -171,26 +171,32 @@ namespace CTNewGetPic
 
         public void Start()
         {
-            new Thread(async () =>
+            if (Interlocked.CompareExchange(ref _started, 1, 0) == 0)
             {
-                await foreach (var msg in _channel.Reader.ReadAllAsync(_cts.Token))
+                new Thread(async () =>
                 {
-                    try
+                    await foreach (var msg in _channel.Reader.ReadAllAsync(_cts.Token))
                     {
-                        await _mqttService.Publish(_settings.Topic, msg, _cts.Token);
-                        _logger.LogInformation("Published mqtt server success msg: {0}", msg);
+                        try
+                        {
+                            await _mqttService.Publish(_settings.Topic, msg, _cts.Token);
+                            _logger.LogInformation("Published mqtt server success msg: {0}", msg);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "mqttservice 发布消息异常");
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "mqttservice 发布消息异常");
-                    }
-                }
-            }).Start();
+                }).Start();
+            }
         }
 
         public void Stop()
         {
-            _cts.Cancel();
+            if (Interlocked.CompareExchange(ref _started, 0, 1) == 1)
+            {
+                _cts.Cancel();
+            }
         }
     }
 
