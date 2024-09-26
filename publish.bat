@@ -11,7 +11,7 @@ if exist %targetPath% (
 )
 
 REM 发布 CTNewGetPic 到目标文件夹
-dotnet publish .\CTNewGetPic\CTNewGetPic.csproj --self-contained -r win-x64 -c Release -o %targetPath%
+dotnet publish .\CTNewGetPic\GetPic.csproj --self-contained -r win-x64 -c Release -o %targetPath%
 
 REM 发布 ProjectB 到目标文件夹
 dotnet publish .\GetPicShell\GetPicShell.csproj -r win-x64 -c Release -o %targetPath%
