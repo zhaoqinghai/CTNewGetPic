@@ -1,0 +1,8 @@
+{
+    "profiles": {
+        "CTNewGetPic": {
+            "commandName": "Project",
+            "remoteDebugEnabled": true
+        }
+    }
+}
