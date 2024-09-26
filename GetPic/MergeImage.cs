@@ -22,7 +22,8 @@ namespace CTNewGetPic
         private ManualResetEventSlim manualSet = new ManualResetEventSlim(false);
         private readonly List<MergeImgMat> _mergeImages = new List<MergeImgMat>();
         private Channel<string> _channel;
-        private Stopwatch _stopwatch;
+        private readonly Stopwatch _stopwatch;
+        private readonly AsyncLocal<Stopwatch> _threadWatch = new AsyncLocal<Stopwatch>();
 
         public MergeImage(ILogger<MergeImage> logger, ImageTransportPump pump, IOptions<LocalSettings> settings, [FromKeyedServices(MqttServer.MQTT_CHANNEL)] Channel<string> channel)
         {
@@ -122,7 +123,8 @@ namespace CTNewGetPic
                                     manualSet.Reset();
                                     ThreadPool.QueueUserWorkItem(async _ =>
                                     {
-                                        var sw = Stopwatch.StartNew();
+                                        var sw = _threadWatch.Value ??= new Stopwatch();
+                                        sw.Restart();
                                         using var mat = new Mat();
                                         Cv2.HConcat(_mergeImages.OrderBy(x => x.Order).Select(x => x.Data), mat);
                                         manualSet.Set();

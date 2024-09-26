@@ -25,6 +25,7 @@ try
         cts.Cancel();
     }).Start();
 
+    ThreadPool.SetMaxThreads(6, 6);
     var svcs = new ServiceCollection();
     svcs.AddLogging(loggingBuilder =>
     {
