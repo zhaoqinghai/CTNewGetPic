@@ -1,0 +1,55 @@
+# .NET Core
+.vs/
+bin/
+obj/
+obfuscators/
+Publish/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# ASP.NET Core
+wwwroot/
+*.db
+*.log
+*.sqlite
+
+# Rider
+.idea/
+
+# Visual Studio Code
+.vscode/
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+
+# Build Results
+*.dll
+*.exe
+*.pdb
+*.cache
+*.msi
+*.suo
+*.user
+*.userosscache
+*.suo
+*.vssscc
+*.vspscc
+*.nupkg
+*.snk
+*.swp
+*.swo
+*.tmp
+*.log
+
+# NuGet
+*.nupkg
+*.snupkg
+# NuGet v2+
+# NuGet 3.x includes the following global packages folder
+# ~/.nuget/packages
+.nuget/
+# Uncomment if you have tasks that create the project.lock.json file
+project.lock.json
+project.fragment.lock.json
