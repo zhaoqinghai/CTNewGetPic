@@ -9,21 +9,21 @@ using System.Threading.Channels;
 LogManager.GetCurrentClassLogger().Info("**********************app start {0}**********************", args);
 try
 {
-    //if (args.Length != 1)
-    //{
-    //    return;
-    //}
+    if (args.Length != 1)
+    {
+        return;
+    }
     using var cts = new CancellationTokenSource();
-    //using var mutex = new Mutex(false, args[0], out var isNotRunning);
-    //if (isNotRunning)
-    //{
-    //    return;
-    //}
-    //new Thread(() =>
-    //{
-    //    mutex.WaitOne();
-    //    cts.Cancel();
-    //}).Start();
+    using var mutex = new Mutex(false, args[0], out var isNotRunning);
+    if (isNotRunning)
+    {
+        return;
+    }
+    new Thread(() =>
+    {
+        mutex.WaitOne();
+        cts.Cancel();
+    }).Start();
 
     var svcs = new ServiceCollection();
     svcs.AddLogging(loggingBuilder =>
