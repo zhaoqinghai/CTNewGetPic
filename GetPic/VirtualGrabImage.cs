@@ -1,6 +1,8 @@
 ﻿using Microsoft.Extensions.Logging;
 using OpenCvSharp;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading.Tasks;
 
 namespace CTNewGetPic
 {
@@ -12,12 +14,37 @@ namespace CTNewGetPic
         private readonly ImageTransportPump _pump;
         private static long _frameNo = 0;
 
-        private static int _hasReset = 1;
+        private static ConcurrentQueue<(Action, TaskCompletionSource)> _tasks = new ConcurrentQueue<(Action, TaskCompletionSource)>();
 
         public VirtualGrabImage(ILogger<VirtualGrabImage> logger, [NotNull] DalsaConfig dalsaConfig, [NotNull] ImageTransportPump pump) => (_dalsaConfig, _logger, _pump) = (dalsaConfig, logger, pump);
 
         private CancellationTokenSource? _cts;
         private int _started = 0;
+
+        static VirtualGrabImage()
+        {
+            new Thread(async () =>
+            {
+                while (true)
+                {
+                    while (_tasks.Count != 4)
+                    {
+                        Thread.Yield();
+                    }
+
+                    await Task.WhenAll(_tasks.Select(_ => Task.Run(() =>
+                    {
+                        _.Item1.Invoke();
+                        return _.Item2;
+                    }))).ContinueWith(t =>
+                    {
+                        _tasks.Clear();
+                        _frameNo++;
+                        Parallel.ForEach(t.Result, t => t.TrySetResult());
+                    });
+                }
+            }).Start();
+        }
 
         public Task CloseAsync()
         {
@@ -35,6 +62,15 @@ namespace CTNewGetPic
             return Task.CompletedTask;
         }
 
+        static async Task SyncGrab(Action action)
+        {
+            var tsc = new TaskCompletionSource();
+
+            _tasks.Enqueue((action, tsc));
+
+            await tsc.Task;
+        }
+
         public Task<bool> OpenAsync()
         {
             if (Interlocked.CompareExchange(ref _started, 1, 0) == 0)
@@ -45,7 +81,7 @@ namespace CTNewGetPic
                 }
 
                 _logger.LogInformation($"Open Virtual相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})");
-                new Thread(() =>
+                new Thread(async () =>
                 {
                     try
                     {
@@ -62,30 +98,20 @@ namespace CTNewGetPic
 
                         while (!_cts.IsCancellationRequested)
                         {
-                            using var src = Cv2.ImRead($@"C:\Users\cayav\Desktop\Image\{_dalsaConfig.Id}\{(_frameNo % 302) + 1}.jpg", ImreadModes.Grayscale);
-                            if (MatCache.AddCache(src, _dalsaConfig.BeginX, _dalsaConfig.EndX, out var id))
+                            await SyncGrab(() =>
                             {
-                                _pump.Enqueue(new ImageInfo()
+                                using var src = Cv2.ImRead($@"C:\Users\cayav\Desktop\Image\{_dalsaConfig.Id}\{(_frameNo % 302) + 1}.jpg", ImreadModes.Grayscale);
+                                if (MatCache.AddCache(src, _dalsaConfig.BeginX, _dalsaConfig.EndX, out var id))
                                 {
-                                    FrameNo = _frameNo,
-                                    CameraId = _dalsaConfig.Id,
-                                    CacheId = id,
-                                    FrameHeight = src.Height
-                                });
-                            }
-                            if (!(Interlocked.CompareExchange(ref _hasReset, 1, 4) == 4))
-                            {
-                                Interlocked.Increment(ref _hasReset);
-
-                                while (_hasReset != 1)
-                                {
-                                    Thread.Yield();
+                                    _pump.Enqueue(new ImageInfo()
+                                    {
+                                        FrameNo = _frameNo,
+                                        CameraId = _dalsaConfig.Id,
+                                        CacheId = id,
+                                        FrameHeight = src.Height
+                                    });
                                 }
-                            }
-                            else
-                            {
-                                _frameNo++;
-                            }
+                            });
                         }
                     }
                     catch (Exception ex)
