@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
@@ -28,6 +29,7 @@ namespace CTNewGetPic
         private readonly Dictionary<int, DalsaConfig> _configs = new Dictionary<int, DalsaConfig>();
         private ManualResetEventSlim manualSet = new ManualResetEventSlim(false);
         private readonly ConcurrentDictionary<int, MergeImgMat> _mergeImages = new ConcurrentDictionary<int, MergeImgMat>();
+        private readonly Dictionary<int, int> _effectivePxRangeDict;
         private Channel<string> _channel;
         private readonly Stopwatch _stopwatch;
 
@@ -39,6 +41,8 @@ namespace CTNewGetPic
             _configs = _settings.CamConfigs.ToDictionary(x => x.Id);
             _stopwatch = new Stopwatch();
             _channel = channel;
+            var orderCameras = _settings.CamConfigs.OrderBy(x => x.Id).ToList();
+            _effectivePxRangeDict = orderCameras.Select((x, i) => (x.Id, orderCameras.Take(i).Sum(_ => _.EndX - _.BeginX))).ToDictionary(x => x.Id, x => x.Item2);
         }
 
         public void Start()
@@ -79,15 +83,13 @@ namespace CTNewGetPic
                                             };
                                             try
                                             {
+                                                _logger.LogInformation("DEBUG C{0}|F{1} Vertical Merge Start {2} ms", img.CameraId, currentFrameNo, _stopwatch.ElapsedMilliseconds);
                                                 MatCache.Delete(img.CacheId);
 
                                                 if (config.YOffset == 0)
                                                 {
-                                                    lock (_mergeImages)
-                                                    {
-                                                        _logger.LogInformation("C{0}-F{1} Array Length {2} YOffset {3}", img.CameraId, img.FrameNo, _mergeImages.Count, config.YOffset);
-                                                        _mergeImages.AddOrUpdate(mergeMat.Order, _ => mergeMat, (_, _) => mergeMat);
-                                                    }
+                                                    _logger.LogInformation("C{0}-F{1} Array Length {2} YOffset {3}", img.CameraId, img.FrameNo, _mergeImages.Count, config.YOffset);
+                                                    _mergeImages.AddOrUpdate(mergeMat.Order, _ => mergeMat, (_, _) => mergeMat);
                                                     return;
                                                 }
                                                 if (!_lastImageDict.TryGetValue(img.CameraId, out var info))
@@ -96,8 +98,10 @@ namespace CTNewGetPic
                                                     {
                                                         var size = config.YOffset * cache.Width * cache.Channels;
                                                         var dataArr = _lastImageDict.AddOrUpdate(img.CameraId, _ => new byte[size], (_, old) => old.Length == size ? old : new byte[size]);
-
-                                                        Unsafe.CopyBlock(ref MemoryMarshal.GetArrayDataReference(dataArr), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), (cache.Height - config.YOffset) * cache.Width * cache.Channels), (uint)size);
+                                                        fixed (byte* arr = dataArr)
+                                                        {
+                                                            Unsafe.CopyBlock(ref Unsafe.AsRef<byte>(arr), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), (cache.Height - config.YOffset) * cache.Width * cache.Channels), (uint)size);
+                                                        }
                                                     }
                                                 }
                                                 else if (cache.Width == info.Length / (config.YOffset * cache.Channels) && info.Length % (config.YOffset * cache.Channels) == 0)
@@ -110,10 +114,14 @@ namespace CTNewGetPic
                                                         unsafe
                                                         {
                                                             var dataArr = _lastImageDict.AddOrUpdate(img.CameraId, _ => new byte[size], (_, old) => old.Length == size ? old : new byte[size]);
-                                                            Unsafe.CopyBlock(ref MemoryMarshal.GetArrayDataReference(dataArr), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), (cache.Height - config.YOffset) * cache.Width * cache.Channels), (uint)size);
+                                                            fixed (byte* arr = dataArr)
+                                                            fixed (byte* lastFrameData = data)
+                                                            {
+                                                                Unsafe.CopyBlock(ref Unsafe.AsRef<byte>(arr), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), (cache.Height - config.YOffset) * cache.Width * cache.Channels), (uint)size);
 
-                                                            Unsafe.CopyBlock(ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), config.YOffset * cache.Width * cache.Channels), ref Unsafe.AsRef<byte>((void*)cache.Data), (uint)((cache.Height - config.YOffset) * cache.Width * cache.Channels));
-                                                            Unsafe.CopyBlock(ref Unsafe.AsRef<byte>((void*)cache.Data), ref MemoryMarshal.GetArrayDataReference(data), (uint)size);
+                                                                Unsafe.CopyBlock(ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), config.YOffset * cache.Width * cache.Channels), ref Unsafe.AsRef<byte>((void*)cache.Data), (uint)((cache.Height - config.YOffset) * cache.Width * cache.Channels));
+                                                                Unsafe.CopyBlock(ref Unsafe.AsRef<byte>((void*)cache.Data), ref Unsafe.AsRef<byte>(lastFrameData), (uint)size);
+                                                            }
                                                         }
                                                         _mergeImages.AddOrUpdate(mergeMat.Order, _ => mergeMat, (_, _) => mergeMat);
                                                     }
@@ -157,13 +165,11 @@ namespace CTNewGetPic
                                     var mergeTotalWidth = _mergeImages.Sum(x => x.Value.Data.Width);
                                     var mergeTotalStride = channels * mergeTotalWidth;
                                     var size = height * mergeTotalStride;
-                                    var mergeArr = ArrayPool<byte>.Shared.Rent(size);
-
-                                    var dict = _mergeImages.Values.OrderBy(x => x.Order).Select((x, i) => (x.Order, _mergeImages.Take(i).Sum(x => x.Value.Data.Width))).ToDictionary(x => x.Order, x => x.Item2);
-                                    try
+                                    using ManualResetEventSlim manualSet = new ManualResetEventSlim(false);
+                                    ThreadPool.QueueUserWorkItem(async _ =>
                                     {
-                                        manualSet.Reset();
-                                        ThreadPool.QueueUserWorkItem(async _ =>
+                                        var mergeArr = Marshal.AllocHGlobal(size);
+                                        try
                                         {
                                             var sw = Stopwatch.StartNew();
 
@@ -174,7 +180,9 @@ namespace CTNewGetPic
                                                 {
                                                     unsafe
                                                     {
-                                                        Unsafe.CopyBlock(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(mergeArr), i * mergeTotalStride + dict[img.Value.Order]), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)img.Value.Data.Data), i * stride), (uint)stride);
+                                                        ref byte src = ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)img.Value.Data.Data), i * stride);
+                                                        ref byte dst = ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)mergeArr), i * mergeTotalStride + _effectivePxRangeDict[img.Value.Order] * channels);
+                                                        Unsafe.CopyBlock(ref dst, ref src, (uint)stride);
                                                     }
                                                 }
                                             });
@@ -188,10 +196,8 @@ namespace CTNewGetPic
                                                 {
                                                     Directory.CreateDirectory(directoryPath);
                                                 }
-                                                unsafe
-                                                {
-                                                    Cv2.ImWrite(path, Mat.FromPixelData(height, mergeTotalWidth, type, (IntPtr)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(mergeArr))));
-                                                }
+                                                using var mat = Mat.FromPixelData(height, mergeTotalWidth, type, mergeArr);
+                                                Cv2.ImWrite(path, mat);
                                                 _logger.LogInformation("DEBUG F{0} Save Image Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
 
                                                 _logger.LogInformation("完成合图 F{0}", currentFrameNo);
@@ -200,13 +206,21 @@ namespace CTNewGetPic
 
                                                 _logger.LogInformation("DEBUG F{0} Publish channel msg: {1}", currentFrameNo, path);
                                             }
-                                        }, null);
-                                        manualSet.Wait();
-                                    }
-                                    finally
-                                    {
-                                        ArrayPool<byte>.Shared.Return(mergeArr);
-                                    }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            _logger.LogError("horizontal merge or save img error: {0}", ex);
+                                            if (!manualSet.IsSet)
+                                            {
+                                                manualSet.Set();
+                                            }
+                                        }
+                                        finally
+                                        {
+                                            Marshal.FreeHGlobal(mergeArr);
+                                        }
+                                    }, null);
+                                    manualSet.Wait();
                                 }
                                 else
                                 {
