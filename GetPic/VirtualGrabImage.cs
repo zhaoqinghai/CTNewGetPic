@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using OpenCvSharp;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 
 namespace CTNewGetPic
@@ -13,12 +14,46 @@ namespace CTNewGetPic
 
         private static long _frameNo = 0;
 
-        private static int _hasReset = 1;
+        private static ConcurrentQueue<(Action, TaskCompletionSource)> _tasks = new ConcurrentQueue<(Action, TaskCompletionSource)>();
 
         public VirtualGrabImage(ILogger<VirtualGrabImage> logger, [NotNull] DalsaConfig dalsaConfig, [NotNull] ImageTransportPump pump) => (_dalsaConfig, _logger, _pump) = (dalsaConfig, logger, pump);
 
         private CancellationTokenSource? _cts;
         private int _started = 0;
+
+        static VirtualGrabImage()
+        {
+            new Thread(async () =>
+            {
+                while (true)
+                {
+                    while (_tasks.Count != 4)
+                    {
+                        Thread.Yield();
+                    }
+
+                    await Task.WhenAll(_tasks.Select(_ => Task.Run(() =>
+                    {
+                        _.Item1.Invoke();
+                        return _.Item2;
+                    }))).ContinueWith(t =>
+                    {
+                        _tasks.Clear();
+                        _frameNo++;
+                        Parallel.ForEach(t.Result, t => t.TrySetResult());
+                    });
+                }
+            }).Start();
+        }
+
+        static async Task SyncGrab(Action action)
+        {
+            var tsc = new TaskCompletionSource();
+
+            _tasks.Enqueue((action, tsc));
+
+            await tsc.Task;
+        }
 
         public Task CloseAsync()
         {
@@ -46,7 +81,7 @@ namespace CTNewGetPic
                 }
 
                 _logger.LogInformation($"Open Virtual相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})");
-                new Thread(() =>
+                new Thread(async () =>
                 {
                     try
                     {
@@ -62,37 +97,26 @@ namespace CTNewGetPic
                         _cts = new CancellationTokenSource();
                         while (!_cts.IsCancellationRequested)
                         {
-                            using var src = Cv2.ImRead($@"C:\Users\cayav\Desktop\Image\{_dalsaConfig.Id}\{(_frameNo % 302) + 1}.jpg", ImreadModes.Grayscale);
-                            var mat = new Mat(src, new Rect(_dalsaConfig.BeginX, 0, _dalsaConfig.EndX - _dalsaConfig.BeginX, src.Height));
-                            if (MatCache.AddCache(mat, out var id))
+                            await SyncGrab(() =>
                             {
-                                _pump.Enqueue(new ImageInfo()
+                                using var src = Cv2.ImRead($@"C:\Users\cayav\Desktop\Image\{_dalsaConfig.Id}\{(_frameNo % 302) + 1}.jpg", ImreadModes.Grayscale);
+                                var mat = new Mat(src, new Rect(_dalsaConfig.BeginX, 0, _dalsaConfig.EndX - _dalsaConfig.BeginX, src.Height));
+                                if (MatCache.AddCache(mat, out var id))
                                 {
-                                    FrameNo = _frameNo + 1,
-                                    CameraId = _dalsaConfig.Id,
-                                    CacheId = id,
-                                    FrameHeight = mat.Height,
-                                    FrameWidth = mat.Width
-                                });
-                            }
-                            else
-                            {
-                                mat.Dispose();
-                            }
-
-                            if (!(Interlocked.CompareExchange(ref _hasReset, 1, 4) == 4))
-                            {
-                                Interlocked.Increment(ref _hasReset);
-
-                                while (_hasReset != 1)
-                                {
-                                    Thread.Yield();
+                                    _pump.Enqueue(new ImageInfo()
+                                    {
+                                        FrameNo = _frameNo + 1,
+                                        CameraId = _dalsaConfig.Id,
+                                        CacheId = id,
+                                        FrameHeight = mat.Height,
+                                        FrameWidth = mat.Width
+                                    });
                                 }
-                            }
-                            else
-                            {
-                                _frameNo++;
-                            }
+                                else
+                                {
+                                    mat.Dispose();
+                                }
+                            });
                         }
                     }
                     catch (Exception ex)
