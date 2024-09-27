@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenCvSharp;
+using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -10,6 +11,7 @@ using System.IO;
 using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading.Channels;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 
@@ -98,36 +100,33 @@ namespace CTNewGetPic
                                                     {
                                                         var size = config.YOffset * cache.Width * cache.Channels;
                                                         var dataArr = _lastImageDict.AddOrUpdate(img.CameraId, _ => new byte[size], (_, old) => old.Length == size ? old : new byte[size]);
-                                                        fixed (byte* arr = dataArr)
-                                                        {
-                                                            Unsafe.CopyBlock(ref Unsafe.AsRef<byte>(arr), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), (cache.Height - config.YOffset) * cache.Width * cache.Channels), (uint)size);
-                                                        }
+                                                        var src = MemoryMarshal.CreateSpan(ref Unsafe.AsRef<byte>((void*)cache.Data), cache.Length);
+                                                        var dst = dataArr.AsSpan();
+
+                                                        src.Slice((cache.Height - config.YOffset) * cache.Width * cache.Channels, size).CopyTo(dst);
                                                     }
                                                 }
                                                 else if (cache.Width == info.Length / (config.YOffset * cache.Channels) && info.Length % (config.YOffset * cache.Channels) == 0)
                                                 {
                                                     var size = config.YOffset * cache.Width * cache.Channels;
-                                                    var data = ArrayPool<byte>.Shared.Rent(size);
+                                                    var data = Marshal.AllocHGlobal(info.Length);
                                                     try
                                                     {
-                                                        Buffer.BlockCopy(info, 0, data, 0, size);
                                                         unsafe
                                                         {
-                                                            var dataArr = _lastImageDict.AddOrUpdate(img.CameraId, _ => new byte[size], (_, old) => old.Length == size ? old : new byte[size]);
-                                                            fixed (byte* arr = dataArr)
-                                                            fixed (byte* lastFrameData = data)
-                                                            {
-                                                                Unsafe.CopyBlock(ref Unsafe.AsRef<byte>(arr), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), (cache.Height - config.YOffset) * cache.Width * cache.Channels), (uint)size);
-
-                                                                Unsafe.CopyBlock(ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), config.YOffset * cache.Width * cache.Channels), ref Unsafe.AsRef<byte>((void*)cache.Data), (uint)((cache.Height - config.YOffset) * cache.Width * cache.Channels));
-                                                                Unsafe.CopyBlock(ref Unsafe.AsRef<byte>((void*)cache.Data), ref Unsafe.AsRef<byte>(lastFrameData), (uint)size);
-                                                            }
+                                                            Buffer.MemoryCopy(Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(info)), data.ToPointer(), info.Length, info.Length);
+                                                            var src = MemoryMarshal.CreateSpan(ref Unsafe.AsRef<byte>((void*)cache.Data), cache.Length);
+                                                            var lastFrame = new Span<byte>(data.ToPointer(), info.Length);
+                                                            src.Slice((cache.Height - config.YOffset) * cache.Width * cache.Channels, size).CopyTo(info.AsSpan());
+                                                            src.Slice(0, (cache.Height - config.YOffset) * cache.Width * cache.Channels).CopyTo(src.Slice(config.YOffset * cache.Width * cache.Channels));
+                                                            lastFrame.CopyTo(src);
                                                         }
+
                                                         _mergeImages.AddOrUpdate(mergeMat.Order, _ => mergeMat, (_, _) => mergeMat);
                                                     }
                                                     finally
                                                     {
-                                                        ArrayPool<byte>.Shared.Return(data);
+                                                        Marshal.FreeHGlobal(data);
                                                     }
                                                 }
                                                 else
@@ -176,13 +175,14 @@ namespace CTNewGetPic
                                             Parallel.ForEach(_mergeImages, img =>
                                             {
                                                 var stride = img.Value.Data.Channels * img.Value.Data.Width;
-                                                for (var i = 0; i < height; i++)
+
+                                                unsafe
                                                 {
-                                                    unsafe
+                                                    var src = MemoryMarshal.CreateSpan(ref Unsafe.AsRef<byte>((void*)img.Value.Data.Data), stride * height);
+                                                    var dst = new Span<byte>(mergeArr.ToPointer(), size);
+                                                    for (var i = 0; i < height; i++)
                                                     {
-                                                        ref byte src = ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)img.Value.Data.Data), i * stride);
-                                                        ref byte dst = ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)mergeArr), i * mergeTotalStride + _effectivePxRangeDict[img.Value.Order] * channels);
-                                                        Unsafe.CopyBlock(ref dst, ref src, (uint)stride);
+                                                        src.Slice(i * stride, stride).CopyTo(dst.Slice(i * mergeTotalStride + _effectivePxRangeDict[img.Value.Order] * channels));
                                                     }
                                                 }
                                             });

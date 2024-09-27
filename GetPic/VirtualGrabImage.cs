@@ -100,16 +100,18 @@ namespace CTNewGetPic
                         {
                             await SyncGrab(() =>
                             {
-                                using var src = Cv2.ImRead($@"C:\Users\cayav\Desktop\Image\{_dalsaConfig.Id}\{(_frameNo % 302) + 1}.jpg", ImreadModes.Grayscale);
-                                if (MatCache.AddCache(src, _dalsaConfig.BeginX, _dalsaConfig.EndX, out var id))
+                                using (var src = Cv2.ImRead($@"C:\Users\cayav\Desktop\Image\{_dalsaConfig.Id}\{(_frameNo % 302) + 1}.jpg", ImreadModes.Grayscale))
                                 {
-                                    _pump.Enqueue(new ImageInfo()
+                                    if (MatCache.AddCache(src.Data, src.Height, src.Width, src.Channels(), src.Type(), _dalsaConfig.BeginX, _dalsaConfig.EndX, out var id))
                                     {
-                                        FrameNo = _frameNo,
-                                        CameraId = _dalsaConfig.Id,
-                                        CacheId = id,
-                                        FrameHeight = src.Height
-                                    });
+                                        _pump.Enqueue(new ImageInfo()
+                                        {
+                                            FrameNo = _frameNo,
+                                            CameraId = _dalsaConfig.Id,
+                                            CacheId = id,
+                                            FrameHeight = src.Height
+                                        });
+                                    }
                                 }
                             });
                         }

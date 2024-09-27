@@ -64,23 +64,27 @@ namespace CTNewGetPic
             }
         }
 
-        public unsafe static bool AddCache(Mat mat, int beginX, int endX, out Guid id)
+        public unsafe static bool AddCache(IntPtr mat, int height, int width, int channels, MatType type, int beginX, int endX, out Guid id)
         {
             id = Guid.NewGuid();
             _cacheIds.Enqueue((id, DateTimeOffset.Now.ToUnixTimeSeconds()));
-            var channels = mat.Channels();
-            var size = (endX - beginX) * mat.Height * channels;
+            var size = (endX - beginX) * height * channels;
             var data = Marshal.AllocHGlobal(size);
-            if (!_cache.TryAdd(id, new ImgCache { Data = data, Length = size, Width = endX - beginX, Height = mat.Height, Channels = channels, Type = mat.Type() }))
+            if (!_cache.TryAdd(id, new ImgCache { Data = data, Length = size, Width = endX - beginX, Height = height, Channels = channels, Type = type }))
             {
+                Marshal.FreeHGlobal(data);
                 return false;
             }
-            var span = MemoryMarshal.CreateSpan(ref Unsafe.AsRef<byte>(mat.DataPointer), mat.Width * mat.Height * channels);
-            var stride = mat.Width * channels;
+            var stride = width * channels;
+            var offsetStride = beginX * channels;
             var destStride = (endX - beginX) * channels;
-            for (var i = 0; i < mat.Rows; i++)
+
+            var src = MemoryMarshal.CreateSpan(ref Unsafe.AsRef<byte>((void*)mat), stride * height);
+            var dst = new Span<byte>(data.ToPointer(), size);
+
+            for (var i = 0; i < height; i++)
             {
-                span.Slice(i * stride + beginX * channels, (endX - beginX) * channels).CopyTo(MemoryMarshal.CreateSpan(ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)data), i * destStride), destStride));
+                src.Slice(i * stride + offsetStride, destStride).CopyTo(dst.Slice(i * destStride, destStride));
             }
 
             return true;
