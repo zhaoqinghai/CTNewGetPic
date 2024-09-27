@@ -1,9 +1,16 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenCvSharp;
+using System.Buffers;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace CTNewGetPic
 {
@@ -17,10 +24,10 @@ namespace CTNewGetPic
         private object _lock = new object();
 
         private CancellationTokenSource? _cts;
-        private readonly ConcurrentDictionary<int, Mat> _lastImageDict = new ConcurrentDictionary<int, Mat>();
+        private readonly ConcurrentDictionary<int, byte[]> _lastImageDict = new ConcurrentDictionary<int, byte[]>();
         private readonly Dictionary<int, DalsaConfig> _configs = new Dictionary<int, DalsaConfig>();
         private ManualResetEventSlim manualSet = new ManualResetEventSlim(false);
-        private readonly List<MergeImgMat> _mergeImages = new List<MergeImgMat>();
+        private readonly ConcurrentDictionary<int, MergeImgMat> _mergeImages = new ConcurrentDictionary<int, MergeImgMat>();
         private Channel<string> _channel;
         private readonly Stopwatch _stopwatch;
 
@@ -63,45 +70,61 @@ namespace CTNewGetPic
 
                                     if (_configs.TryGetValue(img.CameraId, out var config) && img.FrameHeight >= config.YOffset)
                                     {
-                                        if (MatCache.GetCache(img.CacheId, out var mat) && mat != null)
+                                        if (MatCache.GetCache(img.CacheId, out var cache) && cache != null)
                                         {
-                                            MatCache.Delete(img.CacheId);
-                                            if (config.YOffset == 0)
+                                            var mergeMat = new MergeImgMat()
                                             {
-                                                lock (_mergeImages)
-                                                {
-                                                    _logger.LogInformation("C{0}-F{1} Array Length {2} YOffset {3}", img.CameraId, img.FrameNo, _mergeImages.Count, config.YOffset);
-                                                    _mergeImages.Add(new MergeImgMat
-                                                    {
-                                                        Data = mat,
-                                                        Order = img.CameraId,
-                                                    });
-                                                }
-                                                return;
-                                            }
+                                                Data = cache,
+                                                Order = img.CameraId
+                                            };
                                             try
                                             {
-                                                if (!_lastImageDict.TryGetValue(img.CameraId, out var info))
+                                                MatCache.Delete(img.CacheId);
+
+                                                if (config.YOffset == 0)
                                                 {
-                                                    _lastImageDict.TryAdd(img.CameraId, new Mat(mat, new Rect(0, mat.Height - config.YOffset, mat.Width, config.YOffset)));
-                                                }
-                                                else if (mat.Width == info.Width && info != null)
-                                                {
-                                                    _lastImageDict.TryUpdate(img.CameraId, new Mat(mat, new Rect(0, mat.Height - config.YOffset, mat.Width, config.YOffset)), info);
-                                                    Mat src = new Mat();
-                                                    Cv2.VConcat(new List<Mat> { info, new Mat(mat, new Rect(0, 0, mat.Width, mat.Height - config.YOffset)) }, src);
                                                     lock (_mergeImages)
                                                     {
                                                         _logger.LogInformation("C{0}-F{1} Array Length {2} YOffset {3}", img.CameraId, img.FrameNo, _mergeImages.Count, config.YOffset);
-
-                                                        _mergeImages.Add(new MergeImgMat
-                                                        {
-                                                            Data = src,
-                                                            Order = img.CameraId,
-                                                        });
+                                                        _mergeImages.AddOrUpdate(mergeMat.Order, _ => mergeMat, (_, _) => mergeMat);
                                                     }
-                                                    info.Dispose();
-                                                    info = null;
+                                                    return;
+                                                }
+                                                if (!_lastImageDict.TryGetValue(img.CameraId, out var info))
+                                                {
+                                                    unsafe
+                                                    {
+                                                        var size = config.YOffset * cache.Width * cache.Channels;
+                                                        var dataArr = _lastImageDict.AddOrUpdate(img.CameraId, _ => new byte[size], (_, old) => old.Length == size ? old : new byte[size]);
+
+                                                        Unsafe.CopyBlock(ref MemoryMarshal.GetArrayDataReference(dataArr), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), (cache.Height - config.YOffset) * cache.Width * cache.Channels), (uint)size);
+                                                    }
+                                                }
+                                                else if (cache.Width == info.Length / (config.YOffset * cache.Channels) && info.Length % (config.YOffset * cache.Channels) == 0)
+                                                {
+                                                    var size = config.YOffset * cache.Width * cache.Channels;
+                                                    var data = ArrayPool<byte>.Shared.Rent(size);
+                                                    try
+                                                    {
+                                                        Buffer.BlockCopy(info, 0, data, 0, size);
+                                                        unsafe
+                                                        {
+                                                            var dataArr = _lastImageDict.AddOrUpdate(img.CameraId, _ => new byte[size], (_, old) => old.Length == size ? old : new byte[size]);
+                                                            Unsafe.CopyBlock(ref MemoryMarshal.GetArrayDataReference(dataArr), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), (cache.Height - config.YOffset) * cache.Width * cache.Channels), (uint)size);
+
+                                                            Unsafe.CopyBlock(ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)cache.Data), config.YOffset * cache.Width * cache.Channels), ref Unsafe.AsRef<byte>((void*)cache.Data), (uint)((cache.Height - config.YOffset) * cache.Width * cache.Channels));
+                                                            Unsafe.CopyBlock(ref Unsafe.AsRef<byte>((void*)cache.Data), ref MemoryMarshal.GetArrayDataReference(data), (uint)size);
+                                                        }
+                                                        _mergeImages.AddOrUpdate(mergeMat.Order, _ => mergeMat, (_, _) => mergeMat);
+                                                    }
+                                                    finally
+                                                    {
+                                                        ArrayPool<byte>.Shared.Return(data);
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    _logger.LogError("old L{0}, new W{1}|H{2}|C{3}", info.Length, cache.Width, cache.Height, cache.Channels);
                                                 }
                                             }
                                             catch (Exception ex)
@@ -110,45 +133,80 @@ namespace CTNewGetPic
                                             }
                                             finally
                                             {
-                                                mat.Dispose();
-                                                mat = null;
+                                                if (!_mergeImages.ContainsKey(mergeMat.Order))
+                                                {
+                                                    Marshal.FreeHGlobal(cache.Data);
+                                                    _mergeImages.TryRemove(mergeMat.Order, out _);
+                                                }
                                             }
                                         }
                                     }
                                 });
                                 _logger.LogInformation("DEBUG F{0} Vertical Merge Elapsed {1} ms", currentFrameNo, _stopwatch.ElapsedMilliseconds);
-                                if (_mergeImages.Count == imgs.Count && imgs.Count > 0)
+
+                                if (_mergeImages.Count == imgs.Count && imgs.Count > 0 && _mergeImages.All(x => x.Value.Data.Height == imgs.First().FrameHeight))
                                 {
-                                    manualSet.Reset();
-                                    ThreadPool.QueueUserWorkItem(async _ =>
+                                    var height = _mergeImages.First().Value.Data.Height;
+                                    var channels = _mergeImages.First().Value.Data.Channels;
+                                    var type = _mergeImages.First().Value.Data.Type;
+                                    if (_mergeImages.Any(x => x.Value.Data.Height != height) || _mergeImages.Any(x => x.Value.Data.Channels != channels) || _mergeImages.Any(x => x.Value.Data.Type != type))
                                     {
-                                        var sw = Stopwatch.StartNew();
-                                        using var mat = new Mat();
-                                        Cv2.HConcat(_mergeImages.OrderBy(x => x.Order).Select(x => x.Data), mat);
-                                        manualSet.Set();
-                                        _logger.LogInformation("DEBUG F{0} Horizontal Merge Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
-                                        var path = Path.Combine(_settings.SaveImgDir, $"{DateTime.Today:yyyy-MM-dd}\\{DateTime.Now:MMdd_HHmmss_fff}.jpg");
-                                        var directoryPath = Path.GetDirectoryName(path);
-                                        if (!string.IsNullOrEmpty(directoryPath))
+                                        _logger.LogInformation("合图横向拼接存在高度或通道数不一致问题 H({0}), C({0})", string.Join(',', _mergeImages.Select(x => x.Value.Data.Height)), string.Join(',', _mergeImages.Select(x => x.Value.Data.Channels)));
+                                        return;
+                                    }
+                                    var mergeTotalWidth = _mergeImages.Sum(x => x.Value.Data.Width);
+                                    var mergeTotalStride = channels * mergeTotalWidth;
+                                    var size = height * mergeTotalStride;
+                                    var mergeArr = ArrayPool<byte>.Shared.Rent(size);
+
+                                    var dict = _mergeImages.Values.OrderBy(x => x.Order).Select((x, i) => (x.Order, _mergeImages.Take(i).Sum(x => x.Value.Data.Width))).ToDictionary(x => x.Order, x => x.Item2);
+                                    try
+                                    {
+                                        manualSet.Reset();
+                                        ThreadPool.QueueUserWorkItem(async _ =>
                                         {
-                                            if (!Directory.Exists(directoryPath))
+                                            var sw = Stopwatch.StartNew();
+
+                                            Parallel.ForEach(_mergeImages, img =>
                                             {
-                                                Directory.CreateDirectory(directoryPath);
+                                                var stride = img.Value.Data.Channels * img.Value.Data.Width;
+                                                for (var i = 0; i < height; i++)
+                                                {
+                                                    unsafe
+                                                    {
+                                                        Unsafe.CopyBlock(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(mergeArr), i * mergeTotalStride + dict[img.Value.Order]), ref Unsafe.Add(ref Unsafe.AsRef<byte>((void*)img.Value.Data.Data), i * stride), (uint)stride);
+                                                    }
+                                                }
+                                            });
+                                            manualSet.Set();
+                                            _logger.LogInformation("DEBUG F{0} Horizontal Merge Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
+                                            var path = Path.Combine(_settings.SaveImgDir, $"{DateTime.Today:yyyy-MM-dd}\\{DateTime.Now:MMdd_HHmmss_fff}.jpg");
+                                            var directoryPath = Path.GetDirectoryName(path);
+                                            if (!string.IsNullOrEmpty(directoryPath))
+                                            {
+                                                if (!Directory.Exists(directoryPath))
+                                                {
+                                                    Directory.CreateDirectory(directoryPath);
+                                                }
+                                                unsafe
+                                                {
+                                                    Cv2.ImWrite(path, Mat.FromPixelData(height, mergeTotalWidth, type, (IntPtr)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(mergeArr))));
+                                                }
+                                                _logger.LogInformation("DEBUG F{0} Save Image Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
+
+                                                _logger.LogInformation("完成合图 F{0}", currentFrameNo);
+
+                                                await _channel.Writer.WriteAsync(path);
+
+                                                _logger.LogInformation("DEBUG F{0} Publish channel msg: {1}", currentFrameNo, path);
                                             }
-
-                                            var encodeParam = new ImageEncodingParam(ImwriteFlags.JpegQuality, 95);
-
-                                            Cv2.ImWrite(path, mat, new[] { encodeParam });
-                                            _logger.LogInformation("DEBUG F{0} Save Image Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
-
-                                            _logger.LogInformation("完成合图 F{0}", currentFrameNo);
-
-                                            await _channel.Writer.WriteAsync(path);
-
-                                            _logger.LogInformation("DEBUG F{0} Publish channel msg: {1}", currentFrameNo, path);
-                                        }
-                                    }, null);
-                                    manualSet.Wait();
+                                        }, null);
+                                        manualSet.Wait();
+                                    }
+                                    finally
+                                    {
+                                        ArrayPool<byte>.Shared.Return(mergeArr);
+                                    }
                                 }
                                 else
                                 {
@@ -163,7 +221,7 @@ namespace CTNewGetPic
                             {
                                 foreach (var mat in _mergeImages)
                                 {
-                                    mat.Data?.Dispose();
+                                    Marshal.FreeHGlobal(mat.Value.Data.Data);
                                 }
 
                                 _mergeImages.Clear();
@@ -192,7 +250,7 @@ namespace CTNewGetPic
         {
             public int Order { get; set; }
 
-            public required Mat Data { get; set; }
+            public required ImgCache Data { get; set; }
         }
     }
 }

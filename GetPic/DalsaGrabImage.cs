@@ -183,22 +183,15 @@ namespace CTNewGetPic
                 _buffer.GetAddress(out var addr);
                 _logger.LogInformation("C{0}-F{1}-W{2}-H{3} 接收采图数据", _dalsaConfig.Id, frameNo, _buffer.Width, _buffer.Height);
                 using var src = Mat.FromPixelData(_buffer.Height, _buffer.Width, MatType.CV_8UC1, addr);
-                var mat = new Mat(src, new Rect(_dalsaConfig.BeginX, 0, _dalsaConfig.EndX - _dalsaConfig.BeginX, src.Height));
-                if (MatCache.AddCache(mat, out var id))
+                if (MatCache.AddCache(src, _dalsaConfig.BeginX, _dalsaConfig.EndX, out var id))
                 {
                     _pump.Enqueue(new ImageInfo()
                     {
                         FrameNo = _frameNo,
                         CameraId = _dalsaConfig.Id,
                         CacheId = id,
-                        FrameHeight = _buffer.Height,
-                        FrameWidth = _buffer.Width
+                        FrameHeight = _buffer.Height
                     });
-                }
-                else
-                {
-                    mat.Dispose();
-                    mat = null;
                 }
             }
         }
@@ -213,7 +206,5 @@ namespace CTNewGetPic
         public Guid CacheId { get; set; }
 
         public int FrameHeight { get; set; }
-
-        public int FrameWidth { get; set; }
     }
 }
