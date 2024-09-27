@@ -53,3 +53,5 @@ Thumbs.db
 # Uncomment if you have tasks that create the project.lock.json file
 project.lock.json
 project.fragment.lock.json
+/HighPerformance
+/Origin
