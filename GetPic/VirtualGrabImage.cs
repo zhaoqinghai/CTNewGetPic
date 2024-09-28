@@ -114,6 +114,7 @@ namespace CTNewGetPic
                                     }
                                 }
                             });
+                            await Task.Delay(100);
                         }
                     }
                     catch (Exception ex)

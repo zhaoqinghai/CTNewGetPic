@@ -197,14 +197,20 @@ namespace CTNewGetPic
                                                     Directory.CreateDirectory(directoryPath);
                                                 }
                                                 using var mat = Mat.FromPixelData(height, mergeTotalWidth, type, mergeArr);
-                                                Cv2.ImWrite(path, mat);
-                                                _logger.LogInformation("DEBUG F{0} Save Image Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
+                                                if (mat.SaveImage(path))
+                                                {
+                                                    _logger.LogInformation("DEBUG F{0} Save Image Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
 
-                                                _logger.LogInformation("完成合图 F{0}", currentFrameNo);
+                                                    _logger.LogInformation("完成合图 F{0}", currentFrameNo);
 
-                                                await _channel.Writer.WriteAsync(path);
+                                                    await _channel.Writer.WriteAsync(path);
 
-                                                _logger.LogInformation("DEBUG F{0} Publish channel msg: {1}", currentFrameNo, path);
+                                                    _logger.LogInformation("DEBUG F{0} Publish channel msg: {1}", currentFrameNo, path);
+                                                }
+                                                else
+                                                {
+                                                    _logger.LogInformation("合图保存失败 F{0}", currentFrameNo);
+                                                }
                                             }
                                         }
                                         catch (Exception ex)
