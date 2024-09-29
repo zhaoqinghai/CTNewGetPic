@@ -102,7 +102,7 @@ namespace CTNewGetPic
                             {
                                 using (var src = Cv2.ImRead($@"C:\Users\cayav\Desktop\Image\{_dalsaConfig.Id}\{(_frameNo % 302) + 1}.jpg", ImreadModes.Grayscale))
                                 {
-                                    if (MatCache.AddCache(src.Data, src.Height, src.Width, src.Channels(), src.Type(), _dalsaConfig.BeginX, _dalsaConfig.EndX, out var id))
+                                    if (MatCache.AddCache(src.Data, src.Height, src.Width, src.Channels(), src.Type(), out var id))
                                     {
                                         _pump.Enqueue(new ImageInfo()
                                         {

@@ -29,11 +29,12 @@ namespace CTNewGetPic
         private CancellationTokenSource? _cts;
         private readonly ConcurrentDictionary<int, byte[]> _lastImageDict = new ConcurrentDictionary<int, byte[]>();
         private readonly Dictionary<int, DalsaConfig> _configs = new Dictionary<int, DalsaConfig>();
-        private ManualResetEventSlim manualSet = new ManualResetEventSlim(false);
+        private ManualResetEventSlim _manualSet = new ManualResetEventSlim(false);
         private readonly ConcurrentDictionary<int, MergeImgMat> _mergeImages = new ConcurrentDictionary<int, MergeImgMat>();
-        private readonly Dictionary<int, int> _effectivePxRangeDict;
+        private readonly Dictionary<int, (int BeginX, int Width, int GlobalOffsetX)> _effectivePxRangeDict;
         private Channel<string> _channel;
         private readonly Stopwatch _stopwatch;
+        private readonly int _mergeTotalWidth;
 
         public MergeImage(ILogger<MergeImage> logger, ImageTransportPump pump, IOptions<LocalSettings> settings, [FromKeyedServices(MqttServer.MQTT_CHANNEL)] Channel<string> channel)
         {
@@ -44,7 +45,8 @@ namespace CTNewGetPic
             _stopwatch = new Stopwatch();
             _channel = channel;
             var orderCameras = _settings.CamConfigs.OrderBy(x => x.Id).ToList();
-            _effectivePxRangeDict = orderCameras.Select((x, i) => (x.Id, orderCameras.Take(i).Sum(_ => _.EndX - _.BeginX))).ToDictionary(x => x.Id, x => x.Item2);
+            _effectivePxRangeDict = orderCameras.Select((x, i) => (x.Id, (x.BeginX, x.EndX - x.BeginX, orderCameras.Take(i).Sum(_ => _.EndX - _.BeginX)))).ToDictionary(x => x.Id, x => x.Item2);
+            _mergeTotalWidth = _effectivePxRangeDict.Sum(x => x.Value.Width);
         }
 
         public void Start()
@@ -161,8 +163,7 @@ namespace CTNewGetPic
                                         _logger.LogInformation("合图横向拼接存在高度或通道数不一致问题 H({0}), C({0})", string.Join(',', _mergeImages.Select(x => x.Value.Data.Height)), string.Join(',', _mergeImages.Select(x => x.Value.Data.Channels)));
                                         return;
                                     }
-                                    var mergeTotalWidth = _mergeImages.Sum(x => x.Value.Data.Width);
-                                    var mergeTotalStride = channels * mergeTotalWidth;
+                                    var mergeTotalStride = channels * _mergeTotalWidth;
                                     var size = height * mergeTotalStride;
                                     using ManualResetEventSlim manualSet = new ManualResetEventSlim(false);
                                     ThreadPool.QueueUserWorkItem(async _ =>
@@ -182,7 +183,7 @@ namespace CTNewGetPic
                                                     var dst = new Span<byte>(mergeArr.ToPointer(), size);
                                                     for (var i = 0; i < height; i++)
                                                     {
-                                                        src.Slice(i * stride, stride).CopyTo(dst.Slice(i * mergeTotalStride + _effectivePxRangeDict[img.Value.Order] * channels));
+                                                        src.Slice(i * stride + _effectivePxRangeDict[img.Value.Order].BeginX, _effectivePxRangeDict[img.Value.Order].Width).CopyTo(dst.Slice(i * mergeTotalStride + _effectivePxRangeDict[img.Value.Order].GlobalOffsetX * channels));
                                                     }
                                                 }
                                             });
@@ -196,7 +197,7 @@ namespace CTNewGetPic
                                                 {
                                                     Directory.CreateDirectory(directoryPath);
                                                 }
-                                                using var mat = Mat.FromPixelData(height, mergeTotalWidth, type, mergeArr);
+                                                using var mat = Mat.FromPixelData(height, _mergeTotalWidth, type, mergeArr);
                                                 if (mat.SaveImage(path))
                                                 {
                                                     _logger.LogInformation("DEBUG F{0} Save Image Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
@@ -262,6 +263,21 @@ namespace CTNewGetPic
                     _cts?.Cancel();
                     _cts?.Dispose();
                     _cts = null;
+
+                    foreach (var mat in _mergeImages)
+                    {
+                        try
+                        {
+                            Marshal.FreeHGlobal(mat.Value.Data.Data);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError("释放merge image 句柄异常:{0}", ex);
+                        }
+                    }
+
+                    _mergeImages.Clear();
+                    _manualSet.Dispose();
                 }
             }
         }

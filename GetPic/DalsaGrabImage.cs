@@ -182,7 +182,7 @@ namespace CTNewGetPic
             {
                 _buffer.GetAddress(out var addr);
                 _logger.LogInformation("C{0}-F{1}-W{2}-H{3} 接收采图数据", _dalsaConfig.Id, frameNo, _buffer.Width, _buffer.Height);
-                if (MatCache.AddCache(addr, _buffer.Height, _buffer.Width, _buffer.BytesPerPixel, MatType.CV_8UC1, _dalsaConfig.BeginX, _dalsaConfig.EndX, out var id))
+                if (MatCache.AddCache(addr, _buffer.Height, _buffer.Width, _buffer.BytesPerPixel, MatType.CV_8UC1, out var id))
                 {
                     _pump.Enqueue(new ImageInfo()
                     {

@@ -64,28 +64,19 @@ namespace CTNewGetPic
             }
         }
 
-        public unsafe static bool AddCache(IntPtr mat, int height, int width, int channels, MatType type, int beginX, int endX, out Guid id)
+        public unsafe static bool AddCache(IntPtr mat, int height, int width, int channels, MatType type, out Guid id)
         {
             id = Guid.NewGuid();
             _cacheIds.Enqueue((id, DateTimeOffset.Now.ToUnixTimeSeconds()));
-            var size = (endX - beginX) * height * channels;
+            var size = width * height * channels;
             var data = Marshal.AllocHGlobal(size);
-            if (!_cache.TryAdd(id, new ImgCache { Data = data, Length = size, Width = endX - beginX, Height = height, Channels = channels, Type = type }))
+            if (!_cache.TryAdd(id, new ImgCache { Data = data, Length = size, Width = width, Height = height, Channels = channels, Type = type }))
             {
                 Marshal.FreeHGlobal(data);
                 return false;
             }
-            var stride = width * channels;
-            var offsetStride = beginX * channels;
-            var destStride = (endX - beginX) * channels;
 
-            var src = MemoryMarshal.CreateSpan(ref Unsafe.AsRef<byte>((void*)mat), stride * height);
-            var dst = new Span<byte>(data.ToPointer(), size);
-
-            for (var i = 0; i < height; i++)
-            {
-                src.Slice(i * stride + offsetStride, destStride).CopyTo(dst.Slice(i * destStride, destStride));
-            }
+            CopyMemory(data, mat, (uint)size);
 
             return true;
         }
@@ -108,6 +99,9 @@ namespace CTNewGetPic
             }
             return false;
         }
+
+        [DllImport("kernel32.dll", EntryPoint = "RtlMoveMemory")]
+        private static extern void CopyMemory(IntPtr destination, IntPtr source, uint length);
     }
 
     public class ImgCache
