@@ -7,7 +7,7 @@ namespace CTNewGetPic
 {
     public class ImageTransportPump
     {
-        const int CHANNEL_CAPACITY = 10;
+        private const int CHANNEL_CAPACITY = 10;
 
         private readonly ILogger<ImageTransportPump> _logger;
         private readonly IRunServerCmd _runServer;
@@ -69,6 +69,7 @@ namespace CTNewGetPic
                             if (imgInfo.FrameNo < _cache.FrameId)
                             {
                                 _logger.LogInformation("C{0}-F{1} 漏帧 当前帧 {2}", imgInfo.CameraId, imgInfo.FrameNo, _cache.FrameId);
+                                _runServer.ServerCmd.OnNext(ServerCmd.Resume);
                                 MatCache.Delete(imgInfo.CacheId);
                                 continue;
                             }
@@ -77,6 +78,7 @@ namespace CTNewGetPic
                                 if (imgInfo.FrameNo < _cache.FrameId)
                                 {
                                     MatCache.Delete(imgInfo.CacheId);
+                                    _runServer.ServerCmd.OnNext(ServerCmd.Resume);
                                     continue;
                                 }
                                 else if (imgInfo.FrameNo == _cache.FrameId)
@@ -93,6 +95,7 @@ namespace CTNewGetPic
                                                 foreach (var img in imgs)
                                                 {
                                                     _logger.LogInformation("C{0}-F{1} drop oldest item", img.CameraId, img.FrameNo);
+                                                    _runServer.ServerCmd.OnNext(ServerCmd.Resume);
                                                     MatCache.Delete(img.CacheId);
                                                 }
                                             }
@@ -185,6 +188,7 @@ namespace CTNewGetPic
                 _logger.LogInformation("C{0}-F{1} Write To Channel", info.CameraId, info.FrameNo);
                 if (channel.Reader.Count == CHANNEL_CAPACITY)
                 {
+                    _runServer.ServerCmd.OnNext(ServerCmd.Resume);
                     if (channel.Reader.TryRead(out var img))
                     {
                         _logger.LogInformation("C{0}-F{1} drop oldest item", img.CameraId, img.FrameNo);

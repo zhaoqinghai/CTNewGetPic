@@ -61,12 +61,23 @@ try
 
     using var disposable = DefaultContainer.IOC.GetRequiredService<IRunServerCmd>().ServerCmd.Subscribe(x =>
     {
-        if (x == ServerCmd.Restart)
+        if (x == ServerCmd.Shutdown)
         {
             cts.Cancel();
         }
+        else if (x == ServerCmd.Resume)
+        {
+            foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
+            {
+                server.Resume();
+            }
+        }
     });
-    await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
+    try
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
+    }
+    catch (TaskCanceledException) { }
     foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
     {
         server.Stop();

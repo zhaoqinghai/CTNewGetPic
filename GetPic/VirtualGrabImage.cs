@@ -46,6 +46,15 @@ namespace CTNewGetPic
             }).Start();
         }
 
+        private static async Task SyncGrab(Action action)
+        {
+            var tsc = new TaskCompletionSource();
+
+            _tasks.Enqueue((action, tsc));
+
+            await tsc.Task;
+        }
+		
         public Task CloseAsync()
         {
             if (Interlocked.CompareExchange(ref _started, 0, 1) == 1)
@@ -130,6 +139,16 @@ namespace CTNewGetPic
                 return Task.FromResult(true);
             }
             return Task.FromResult(true);
+        }
+
+        public bool Start()
+        {
+            return true;
+        }
+
+        public bool Stop()
+        {
+            return true;
         }
     }
 }
