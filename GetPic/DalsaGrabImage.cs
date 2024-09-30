@@ -112,7 +112,7 @@ namespace CTNewGetPic
                         {
                             await Task.Delay(Timeout.InfiniteTimeSpan, _cts.Token);
                         }
-                        catch (TaskCanceledException) { }
+                        catch (OperationCanceledException) { }
 
                         Stop();
                     }

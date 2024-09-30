@@ -67,9 +67,17 @@ try
         }
         else if (x == ServerCmd.Resume)
         {
-            foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
+            try
             {
-                server.Resume();
+                foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
+                {
+                    server.Resume();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogManager.GetCurrentClassLogger().Error("异常崩溃:{0}", ex);
+                cts.Cancel();
             }
         }
     });
@@ -77,7 +85,7 @@ try
     {
         await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
     }
-    catch (TaskCanceledException) { }
+    catch (OperationCanceledException) { }
     foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
     {
         server.Stop();
@@ -86,6 +94,7 @@ try
 catch (Exception ex)
 {
     LogManager.GetCurrentClassLogger().Error("异常崩溃:{0}", ex);
+    Thread.Sleep(TimeSpan.FromSeconds(1));
     Environment.Exit(-1);
 }
 
