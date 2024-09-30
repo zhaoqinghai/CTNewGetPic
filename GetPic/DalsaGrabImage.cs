@@ -9,6 +9,10 @@ namespace CTNewGetPic
     {
         public Task<bool> OpenAsync();
 
+        public bool Start();
+
+        public bool Stop();
+
         public Task CloseAsync();
     }
 
@@ -19,11 +23,12 @@ namespace CTNewGetPic
         private readonly ImageTransportPump _pump;
         private long _frameNo = 0;
         private SapBuffer? _buffer;
+        private SapAcqDeviceToBuf? _deviceToBuf;
 
         public DalsaGrabImage(ILogger<DalsaGrabImage> logger, [NotNull] DalsaConfig dalsaConfig, [NotNull] ImageTransportPump pump) => (_dalsaConfig, _logger, _pump) = (dalsaConfig, logger, pump);
 
         private CancellationTokenSource? _cts;
-        private int _started = 0;
+        private long _started = 0;
 
         public Task CloseAsync()
         {
@@ -65,26 +70,26 @@ namespace CTNewGetPic
                     {
                         using var location = new SapLocation(_dalsaConfig.ServerName, 0);
                         using var device = new SapAcqDevice(location, _dalsaConfig.ConfigFilePath);
-                        using var buffer = new SapBuffer(2, device, SapBuffer.IsBufferTypeSupported(location, SapBuffer.MemoryType.ScatterGather) ? SapBuffer.MemoryType.ScatterGather : SapBuffer.MemoryType.ScatterGatherPhysical);
-                        using var deviceToBuf = new SapAcqDeviceToBuf(device, buffer);
+                        _buffer = new SapBuffer(2, device, SapBuffer.IsBufferTypeSupported(location, SapBuffer.MemoryType.ScatterGather) ? SapBuffer.MemoryType.ScatterGather : SapBuffer.MemoryType.ScatterGatherPhysical);
+                        _deviceToBuf = new SapAcqDeviceToBuf(device, _buffer);
                         _logger.LogInformation($"idx:{_dalsaConfig.Id},deviceName:{_dalsaConfig.DeviceName},serverName:{_dalsaConfig.ServerName},configName:{_dalsaConfig.ConfigFilePath}");
-                        finallyCallback = () => DestroyObjects(device, buffer, deviceToBuf);
-                        deviceToBuf.XferNotify += new SapXferNotifyHandler(_deviceToBuf_XferNotify);
-                        deviceToBuf.XferNotifyContext = this;
-                        deviceToBuf.Pairs[0].EventType = SapXferPair.XferEventType.EndOfFrame;
+                        finallyCallback = () => DestroyObjects(device, _buffer, _deviceToBuf);
+                        _deviceToBuf.XferNotify += new SapXferNotifyHandler(_deviceToBuf_XferNotify);
+                        _deviceToBuf.XferNotifyContext = this;
+                        _deviceToBuf.Pairs[0].EventType = SapXferPair.XferEventType.EndOfFrame;
                         if (!device.Create())
                         {
                             _logger.LogWarning($"创建相机设备({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})失败");
                             tcs.SetResult(false);
                             return;
                         }
-                        if (!buffer.Create())
+                        if (!_buffer.Create())
                         {
                             _logger.LogWarning($"创建相机缓冲区({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})失败");
                             tcs.SetResult(false);
                             return;
                         }
-                        if (!deviceToBuf.Create())
+                        if (!_deviceToBuf.Create())
                         {
                             _logger.LogWarning($"创建相机SapAcqDeviceToBuf({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})失败");
 
@@ -100,15 +105,16 @@ namespace CTNewGetPic
                             catch { }
                         }
 
-                        deviceToBuf.Init(true);
+                        _deviceToBuf.Init(true);
                         _cts = new CancellationTokenSource();
-                        if (deviceToBuf.Grab())
+                        tcs.SetResult(Start());
+                        try
                         {
-                            _buffer = buffer;
-                            tcs.SetResult(true);
-
                             await Task.Delay(Timeout.InfiniteTimeSpan, _cts.Token);
                         }
+                        catch (TaskCanceledException) { }
+
+                        Stop();
                     }
                     catch (Exception ex)
                     {
@@ -201,6 +207,24 @@ namespace CTNewGetPic
                     mat = null;
                 }
             }
+        }
+
+        public bool Start()
+        {
+            if (Interlocked.Read(ref _started) == 1)
+            {
+                return _deviceToBuf?.Grab() ?? false;
+            }
+            return false;
+        }
+
+        public bool Stop()
+        {
+            if (Interlocked.Read(ref _started) == 1)
+            {
+                return _deviceToBuf?.Freeze() ?? false;
+            }
+            return false;
         }
     }
 

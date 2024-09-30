@@ -192,7 +192,7 @@ namespace CTNewGetPic
         {
             public int Order { get; set; }
 
-            public required Mat Data { get; set; }
+            public Mat Data { get; set; } = null!;
         }
     }
 }

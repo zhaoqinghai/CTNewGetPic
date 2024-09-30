@@ -23,7 +23,8 @@ namespace CTNewGetPic
     public enum ServerCmd
     {
         None = 0,
-        Restart
+        Shutdown,
+        Resume
     }
 
     public interface IRunServerCmd
@@ -41,6 +42,8 @@ namespace CTNewGetPic
         public void Start();
 
         public void Stop();
+
+        public void Resume();
     }
 
     public class DefaultRunServer : IRunServer
@@ -53,7 +56,7 @@ namespace CTNewGetPic
         private readonly MergeImage _mergeImage;
         private readonly List<IGrabImage> _grabImages = new List<IGrabImage>();
         private readonly ImageTransportPump _pump;
-        private int _started = 0;
+        private long _started = 0;
 
         private readonly PeriodicTimer _timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         private object _lock = new object();
@@ -104,13 +107,39 @@ namespace CTNewGetPic
                 }
             }
         }
+
+        public void Resume()
+        {
+            if (Interlocked.Read(ref _started) == 1)
+            {
+                foreach (var grabImage in _grabImages)
+                {
+                    if (!grabImage.Stop())
+                    {
+                        throw new Exception("相机停止采图失败");
+                    }
+                }
+                _pump.Stop();
+                _mergeImage.Stop();
+
+                _mergeImage.Start();
+                _pump.Start();
+                foreach (var grabImage in _grabImages)
+                {
+                    if (!grabImage.Start())
+                    {
+                        throw new Exception("相机停止采图失败");
+                    }
+                }
+            }
+        }
     }
 
     public class CleanDirServer : IRunServer
     {
         private readonly int _remainDays;
         private readonly string _saveDir;
-        private int _started = 0;
+        private long _started = 0;
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
         public CleanDirServer(IOptions<LocalSettings> settings)
@@ -154,6 +183,10 @@ namespace CTNewGetPic
                 _cts.Cancel();
             }
         }
+
+        public void Resume()
+        {
+        }
     }
 
     public class MqttServer : IRunServer
@@ -163,7 +196,7 @@ namespace CTNewGetPic
         private readonly Channel<string> _channel;
         private readonly MqttService _mqttService;
         private readonly ILogger<MqttServer> _logger;
-        private int _started = 0;
+        private long _started = 0;
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private readonly MqttFactory _mqttFactory = new MqttFactory();
 
@@ -203,6 +236,10 @@ namespace CTNewGetPic
             {
                 _cts.Cancel();
             }
+        }
+
+        public void Resume()
+        {
         }
     }
 

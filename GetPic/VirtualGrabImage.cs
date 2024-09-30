@@ -46,7 +46,7 @@ namespace CTNewGetPic
             }).Start();
         }
 
-        static async Task SyncGrab(Action action)
+        private static async Task SyncGrab(Action action)
         {
             var tsc = new TaskCompletionSource();
 
@@ -132,6 +132,16 @@ namespace CTNewGetPic
                 return Task.FromResult(true);
             }
             return Task.FromResult(true);
+        }
+
+        public bool Start()
+        {
+            return true;
+        }
+
+        public bool Stop()
+        {
+            return true;
         }
     }
 }
