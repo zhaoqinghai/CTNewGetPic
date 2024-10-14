@@ -112,25 +112,26 @@ namespace CTNewGetPic
         {
             if (Interlocked.Read(ref _started) == 1)
             {
-                foreach (var grabImage in _grabImages)
+                Parallel.ForEach(_grabImages, grabImg =>
                 {
-                    if (!grabImage.Stop())
+                    if (!grabImg.Stop())
                     {
                         throw new Exception("相机停止采图失败");
                     }
-                }
+                });
                 _pump.Stop();
                 _mergeImage.Stop();
 
                 _mergeImage.Start();
                 _pump.Start();
-                foreach (var grabImage in _grabImages)
+
+                Parallel.ForEach(_grabImages, grabImg =>
                 {
-                    if (!grabImage.Start())
+                    if (!grabImg.Start())
                     {
                         throw new Exception("相机停止采图失败");
                     }
-                }
+                });
             }
         }
     }
