@@ -54,7 +54,7 @@ namespace CTNewGetPic
 
             await tsc.Task;
         }
-		
+
         public Task CloseAsync()
         {
             if (Interlocked.CompareExchange(ref _started, 0, 1) == 1)
@@ -69,15 +69,6 @@ namespace CTNewGetPic
                 }
             }
             return Task.CompletedTask;
-        }
-
-        static async Task SyncGrab(Action action)
-        {
-            var tsc = new TaskCompletionSource();
-
-            _tasks.Enqueue((action, tsc));
-
-            await tsc.Task;
         }
 
         public Task<bool> OpenAsync()
