@@ -198,7 +198,9 @@ namespace CTNewGetPic
                                                     Directory.CreateDirectory(directoryPath);
                                                 }
                                                 using var mat = Mat.FromPixelData(height, _mergeTotalWidth, type, mergeArr);
-                                                if (mat.SaveImage(path))
+                                                using Mat rgbImage = new Mat();
+                                                Cv2.CvtColor(mat, rgbImage, ColorConversionCodes.GRAY2BGR);
+                                                if (rgbImage.SaveImage(path))
                                                 {
                                                     _logger.LogInformation("DEBUG F{0} Save Image Elapsed {1} ms", currentFrameNo, sw.ElapsedMilliseconds);
 

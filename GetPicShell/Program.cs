@@ -3,6 +3,12 @@
 var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
 do
 {
+    Parallel.ForEach(Process.GetProcessesByName("CTNewGetPic"), p =>
+    {
+        Console.WriteLine("当前存在采图进程未关闭");
+        p?.WaitForExit();
+    });
+
     var id = Guid.NewGuid().ToString();
     using var mutex = new Mutex(true, id);
     using var process = Process.Start(new ProcessStartInfo()
