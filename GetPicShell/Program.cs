@@ -21,13 +21,13 @@ do
     });
     try
     {
-        Console.WriteLine("已启动");
+        Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss}--已启动");
         if (process != null)
         {
             Console.WriteLine("等待结束");
             await process.WaitForExitAsync();
         }
-        Console.WriteLine("已停止");
+        Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss}--已停止");
     }
     catch (Exception ex)
     {
