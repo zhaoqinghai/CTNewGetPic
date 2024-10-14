@@ -59,11 +59,11 @@ namespace CTNewGetPic
         {
             if (Interlocked.CompareExchange(ref _started, 0, 1) == 1)
             {
-                _logger.LogInformation($"Virtual相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})开始关闭采图");
+                _logger.LogInformation($"Virtual相机({_dalsaConfig.DeviceName})开始关闭采图");
                 if (_cts != null && !_cts.IsCancellationRequested)
                 {
                     _cts.Cancel();
-                    _logger.LogInformation($"Virtual相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})执行关闭采图");
+                    _logger.LogInformation($"Virtual相机({_dalsaConfig.DeviceName})执行关闭采图");
                     _cts.Dispose();
                     _cts = null;
                 }
@@ -80,7 +80,7 @@ namespace CTNewGetPic
                     return Task.FromResult(false);
                 }
 
-                _logger.LogInformation($"Open Virtual相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})");
+                _logger.LogInformation($"Open Virtual相机({_dalsaConfig.DeviceName})");
                 new Thread(async () =>
                 {
                     try

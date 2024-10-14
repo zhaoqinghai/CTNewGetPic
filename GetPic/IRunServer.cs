@@ -77,7 +77,7 @@ namespace CTNewGetPic
                 {
                     _mergeImage.Start();
                     _pump.Start();
-                    _grabImages.AddRange(_settings.CamConfigs.Select(x => new DalsaGrabImage(DefaultContainer.IOC.GetRequiredService<ILogger<DalsaGrabImage>>(), x, DefaultContainer.IOC.GetRequiredService<ImageTransportPump>())));
+                    _grabImages.AddRange(_settings.CamConfigs.Select(x => new DalsaGrabImage(DefaultContainer.IOC.GetRequiredService<ILogger<DalsaGrabImage>>(), x, DefaultContainer.IOC.GetRequiredService<ImageTransportPump>(), DefaultContainer.IOC.GetRequiredService<CameraManager>())));
                     Parallel.ForEach(_grabImages, DalsaGrabImage =>
                     {
                         if (!DalsaGrabImage.OpenAsync().GetAwaiter().GetResult())

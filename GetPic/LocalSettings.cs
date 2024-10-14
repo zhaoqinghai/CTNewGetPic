@@ -30,8 +30,6 @@ namespace CTNewGetPic
 
         public string DeviceName { get; set; } = null!;
 
-        public string ServerName { get; set; } = null!;
-
         public string ConfigFilePath { get; set; } = null!;
 
         public int YOffset { get; set; }

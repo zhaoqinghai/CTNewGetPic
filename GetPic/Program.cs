@@ -1,4 +1,5 @@
 ﻿using CTNewGetPic;
+using DALSA.SaperaLT.SapClassBasic;
 using Microsoft.Extensions.DependencyInjection;
 using NLog;
 using NLog.Extensions.Logging;
@@ -20,6 +21,9 @@ try
     {
         return;
     }
+    SapManager.Open();
+    SapManager.DetectAllServers(SapManagerBase.DetectServerType.All);
+    SapManager.ServerNotify += (s, e) => SapManager_ServerNotify(s, e, cts);
     new Thread(() =>
     {
         mutex.WaitOne();
@@ -51,8 +55,17 @@ try
         FullMode = BoundedChannelFullMode.DropOldest,
         SingleReader = true
     }));
-
+    svcs.AddSingleton<CameraManager>();
     DefaultContainer.IOC = svcs.BuildServiceProvider();
+
+    {
+        if (!await DefaultContainer.IOC.GetRequiredService<CameraManager>().Init())
+        {
+            SapManager.Close();
+            Environment.Exit(0);
+            return;
+        }
+    }
 
     foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
     {
@@ -90,12 +103,22 @@ try
     {
         server.Stop();
     }
+    SapManager.Close();
 }
 catch (Exception ex)
 {
     LogManager.GetCurrentClassLogger().Error("异常崩溃:{0}", ex);
     Thread.Sleep(TimeSpan.FromSeconds(1));
+    SapManager.Close();
     Environment.Exit(-1);
+}
+
+void SapManager_ServerNotify(object sender, SapServerNotifyEventArgs e, CancellationTokenSource cts)
+{
+    if (e.EventType == SapManager.EventType.ServerDisconnected || e.EventType == SapManager.EventType.ServerNotAccessible || e.EventType == SapManager.EventType.ServerDatabaseFull || e.EventType == SapManager.EventType.ResourceInfoChanged)
+    {
+        cts?.Cancel();
+    }
 }
 
 public static class DefaultContainer

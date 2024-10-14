@@ -20,12 +20,13 @@ namespace CTNewGetPic
     {
         private readonly ILogger<DalsaGrabImage> _logger;
         private readonly DalsaConfig _dalsaConfig;
+        private readonly string _serverName;
         private readonly ImageTransportPump _pump;
         private long _frameNo = 0;
         private SapBuffer? _buffer;
         private SapAcqDeviceToBuf? _deviceToBuf;
 
-        public DalsaGrabImage(ILogger<DalsaGrabImage> logger, [NotNull] DalsaConfig dalsaConfig, [NotNull] ImageTransportPump pump) => (_dalsaConfig, _logger, _pump) = (dalsaConfig, logger, pump);
+        public DalsaGrabImage(ILogger<DalsaGrabImage> logger, [NotNull] DalsaConfig dalsaConfig, [NotNull] ImageTransportPump pump, CameraManager manager) => (_dalsaConfig, _logger, _pump, _serverName) = (dalsaConfig, logger, pump, manager.GetServerName(dalsaConfig.DeviceName) ?? throw new Exception($"找不到设备:{dalsaConfig.DeviceName}对应的服务器"));
 
         private CancellationTokenSource? _cts;
         private long _started = 0;
@@ -34,11 +35,11 @@ namespace CTNewGetPic
         {
             if (Interlocked.CompareExchange(ref _started, 0, 1) == 1)
             {
-                _logger.LogInformation($"DALSA相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})开始关闭采图");
+                _logger.LogInformation($"DALSA相机({_serverName}-{_dalsaConfig.DeviceName})开始关闭采图");
                 if (_cts != null && !_cts.IsCancellationRequested)
                 {
                     _cts.Cancel();
-                    _logger.LogInformation($"DALSA相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})执行关闭采图");
+                    _logger.LogInformation($"DALSA相机({_serverName}-{_dalsaConfig.DeviceName})执行关闭采图");
                     _cts.Dispose();
                     _cts = null;
                 }
@@ -56,11 +57,11 @@ namespace CTNewGetPic
                 }
 
                 _frameNo = 0;
-                _logger.LogInformation($"Open DALSA相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})");
+                _logger.LogInformation($"Open DALSA相机({_serverName}-{_dalsaConfig.DeviceName})");
                 var tcs = new TaskCompletionSource<bool>();
-                if (_dalsaConfig.DeviceName != SapManager.GetResourceName(_dalsaConfig.ServerName, SapManager.ResourceType.AcqDevice, 0))
+                if (_dalsaConfig.DeviceName != SapManager.GetResourceName(_serverName, SapManager.ResourceType.AcqDevice, 0))
                 {
-                    _logger.LogInformation($"Open DALSA相机({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})设备名和服务名不匹配");
+                    _logger.LogInformation($"Open DALSA相机({_serverName}-{_dalsaConfig.DeviceName})设备名和服务名不匹配");
                     return Task.FromResult(false);
                 }
                 new Thread(async () =>
@@ -68,30 +69,30 @@ namespace CTNewGetPic
                     Action? finallyCallback = default;
                     try
                     {
-                        using var location = new SapLocation(_dalsaConfig.ServerName, 0);
+                        using var location = new SapLocation(_serverName, 0);
                         using var device = new SapAcqDevice(location, _dalsaConfig.ConfigFilePath);
                         _buffer = new SapBuffer(2, device, SapBuffer.IsBufferTypeSupported(location, SapBuffer.MemoryType.ScatterGather) ? SapBuffer.MemoryType.ScatterGather : SapBuffer.MemoryType.ScatterGatherPhysical);
                         _deviceToBuf = new SapAcqDeviceToBuf(device, _buffer);
-                        _logger.LogInformation($"idx:{_dalsaConfig.Id},deviceName:{_dalsaConfig.DeviceName},serverName:{_dalsaConfig.ServerName},configName:{_dalsaConfig.ConfigFilePath}");
+                        _logger.LogInformation($"idx:{_dalsaConfig.Id},deviceName:{_dalsaConfig.DeviceName},serverName:{_serverName},configName:{_dalsaConfig.ConfigFilePath}");
                         finallyCallback = () => DestroyObjects(device, _buffer, _deviceToBuf);
                         _deviceToBuf.XferNotify += new SapXferNotifyHandler(_deviceToBuf_XferNotify);
                         _deviceToBuf.XferNotifyContext = this;
                         _deviceToBuf.Pairs[0].EventType = SapXferPair.XferEventType.EndOfFrame;
                         if (!device.Create())
                         {
-                            _logger.LogWarning($"创建相机设备({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})失败");
+                            _logger.LogWarning($"创建相机设备({_serverName}-{_dalsaConfig.DeviceName})失败");
                             tcs.SetResult(false);
                             return;
                         }
                         if (!_buffer.Create())
                         {
-                            _logger.LogWarning($"创建相机缓冲区({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})失败");
+                            _logger.LogWarning($"创建相机缓冲区({_serverName}-{_dalsaConfig.DeviceName})失败");
                             tcs.SetResult(false);
                             return;
                         }
                         if (!_deviceToBuf.Create())
                         {
-                            _logger.LogWarning($"创建相机SapAcqDeviceToBuf({_dalsaConfig.ServerName}-{_dalsaConfig.DeviceName})失败");
+                            _logger.LogWarning($"创建相机SapAcqDeviceToBuf({_serverName}-{_dalsaConfig.DeviceName})失败");
 
                             tcs.SetResult(false);
                             return;
@@ -138,7 +139,7 @@ namespace CTNewGetPic
 
         private void DestroyObjects(SapAcqDevice device, SapBuffer buffer, SapAcqDeviceToBuf deviceToBuf)
         {
-            _logger.LogError("DALSA相机({0}-{1})DestroyObjects Begin", _dalsaConfig.ServerName, _dalsaConfig.DeviceName);
+            _logger.LogError("DALSA相机({0}-{1})DestroyObjects Begin", _serverName, _dalsaConfig.DeviceName);
 
             if (deviceToBuf != null && deviceToBuf.Initialized)
             {
@@ -149,7 +150,7 @@ namespace CTNewGetPic
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError("DALSA相机({0}-{1})DestroyObjects SapAcqDeviceToBuf Excepiton:{2}", _dalsaConfig.ServerName, _dalsaConfig.DeviceName, ex);
+                    _logger.LogError("DALSA相机({0}-{1})DestroyObjects SapAcqDeviceToBuf Excepiton:{2}", _serverName, _dalsaConfig.DeviceName, ex);
                 }
             }
             if (buffer != null && buffer.Initialized)
@@ -160,7 +161,7 @@ namespace CTNewGetPic
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError("DALSA相机({0}-{1})DestroyObjects SapBuffer Excepiton:{2}", _dalsaConfig.ServerName, _dalsaConfig.DeviceName, ex);
+                    _logger.LogError("DALSA相机({0}-{1})DestroyObjects SapBuffer Excepiton:{2}", _serverName, _dalsaConfig.DeviceName, ex);
                 }
             }
             if (device != null && device.Initialized)
@@ -171,7 +172,7 @@ namespace CTNewGetPic
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError("DALSA相机({0}-{1})DestroyObjects SapAcqDevice Excepiton:{2}", _dalsaConfig.ServerName, _dalsaConfig.DeviceName, ex);
+                    _logger.LogError("DALSA相机({0}-{1})DestroyObjects SapAcqDevice Excepiton:{2}", _serverName, _dalsaConfig.DeviceName, ex);
                 }
             }
         }

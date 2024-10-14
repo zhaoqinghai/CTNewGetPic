@@ -11,14 +11,25 @@ do
         CreateNoWindow = true,
         UseShellExecute = true,
         FileName = "CTNewGetPic.exe",
-        WindowStyle = ProcessWindowStyle.Hidden,
+        WindowStyle = ProcessWindowStyle.Hidden
     });
-    Console.WriteLine("已启动");
-    if (process != null)
+    try
     {
-        Console.WriteLine("等待结束");
-        await process.WaitForExitAsync();
+        Console.WriteLine("已启动");
+        if (process != null)
+        {
+            Console.WriteLine("等待结束");
+            await process.WaitForExitAsync();
+        }
+        Console.WriteLine("已停止");
     }
-    Console.WriteLine("已停止");
+    catch (Exception ex)
+    {
+        Console.WriteLine($"运行异常:{ex.Message}");
+        if (process != null && !process.HasExited)
+        {
+            process.Close();
+        }
+    }
 }
 while (await timer.WaitForNextTickAsync());
