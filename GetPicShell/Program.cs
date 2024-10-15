@@ -37,5 +37,6 @@ do
             process.Close();
         }
     }
+    await Task.Delay(TimeSpan.FromSeconds(30));
 }
 while (await timer.WaitForNextTickAsync());

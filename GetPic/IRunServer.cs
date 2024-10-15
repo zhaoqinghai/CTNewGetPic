@@ -78,11 +78,20 @@ namespace CTNewGetPic
                     _mergeImage.Start();
                     _pump.Start();
                     _grabImages.AddRange(_settings.CamConfigs.Select(x => new DalsaGrabImage(DefaultContainer.IOC.GetRequiredService<ILogger<DalsaGrabImage>>(), x, DefaultContainer.IOC.GetRequiredService<ImageTransportPump>(), DefaultContainer.IOC.GetRequiredService<CameraManager>())));
+                    _logger.LogInformation("开始启动采图");
                     Parallel.ForEach(_grabImages, DalsaGrabImage =>
                     {
                         if (!DalsaGrabImage.OpenAsync().GetAwaiter().GetResult())
                         {
                             throw new Exception("采图服务启动失败");
+                        }
+                    });
+                    _logger.LogInformation("连接相机完成");
+                    Parallel.ForEach(_grabImages, grabImg =>
+                    {
+                        if (!grabImg.Start())
+                        {
+                            throw new Exception("相机停止采图失败");
                         }
                     });
                     _logger.LogInformation("采图启动成功");

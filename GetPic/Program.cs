@@ -9,24 +9,47 @@ using System.Threading.Channels;
 
 LogManager.GetCurrentClassLogger().Info("**********************app start {0}**********************", args);
 
+AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+
+void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+{
+    LogManager.GetCurrentClassLogger().Error("task 异常崩溃{0}", e.Exception);
+    e.SetObserved();
+}
+
+void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+{
+    LogManager.GetCurrentClassLogger().Error("异常崩溃{0}", e.ExceptionObject);
+    Environment.FailFast("exit");
+}
+
 try
 {
     if (args.Length != 1)
     {
         return;
     }
-    using var cts = new CancellationTokenSource();
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(GlobalMemMonitor.CancellationTokenSource.Token);
     using var mutex = new Mutex(false, args[0], out var isNotRunning);
     if (isNotRunning)
     {
         return;
     }
+
     SapManager.Open();
-    SapManager.DetectAllServers(SapManagerBase.DetectServerType.All);
     SapManager.ServerNotify += (s, e) => SapManager_ServerNotify(s, e, cts);
+    SapManager.DetectAllServers(SapManagerBase.DetectServerType.All);
     new Thread(() =>
     {
-        mutex.WaitOne();
+        try
+        {
+            mutex.WaitOne();
+        }
+        catch (Exception ex)
+        {
+            LogManager.GetCurrentClassLogger().Info("接收主程序退出:{0}", ex);
+        }
         cts.Cancel();
     }).Start();
 
@@ -66,12 +89,6 @@ try
             return;
         }
     }
-
-    foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
-    {
-        server.Start();
-    }
-
     using var disposable = DefaultContainer.IOC.GetRequiredService<IRunServerCmd>().ServerCmd.Subscribe(x =>
     {
         if (x == ServerCmd.Shutdown)
@@ -94,16 +111,29 @@ try
             }
         }
     });
+    new Task(() =>
+    {
+        foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
+        {
+            server.Start();
+        }
+    }).Start();
+
     try
     {
         await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
     }
     catch (OperationCanceledException) { }
-    foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
+    new Task(() =>
     {
-        server.Stop();
-    }
+        foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
+        {
+            server.Stop();
+        }
+    }).Start();
+    Thread.Sleep(TimeSpan.FromSeconds(3));
     SapManager.Close();
+    LogManager.GetCurrentClassLogger().Info("*****app exit*****");
 }
 catch (Exception ex)
 {
@@ -117,6 +147,7 @@ void SapManager_ServerNotify(object sender, SapServerNotifyEventArgs e, Cancella
 {
     if (e.EventType == SapManager.EventType.ServerDisconnected || e.EventType == SapManager.EventType.ServerNotAccessible || e.EventType == SapManager.EventType.ServerDatabaseFull || e.EventType == SapManager.EventType.ResourceInfoChanged)
     {
+        LogManager.GetCurrentClassLogger().Error("cam status changed: {0}, srv idx: {1}", e.EventType.ToString(), e.ServerIndex);
         cts?.Cancel();
     }
 }

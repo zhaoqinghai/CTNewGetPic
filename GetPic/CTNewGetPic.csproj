@@ -15,8 +15,8 @@
     <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
     <PackageReference Include="NLog.Extensions.Logging" Version="5.3.14" />
     <PackageReference Include="OpenCvSharp4.Windows" Version="4.10.0.20240616" />
-    <PackageReference Include="R3" Version="1.2.8" />
-    <PackageReference Include="System.Text.Json" Version="8.0.4" />
+    <PackageReference Include="R3" Version="1.2.9" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
   <ItemGroup>

@@ -108,7 +108,7 @@ namespace CTNewGetPic
 
                         _deviceToBuf.Init(true);
                         _cts = new CancellationTokenSource();
-                        tcs.SetResult(Start());
+                        tcs.SetResult(true);
                         try
                         {
                             await Task.Delay(Timeout.InfiniteTimeSpan, _cts.Token);
@@ -206,7 +206,11 @@ namespace CTNewGetPic
         {
             if (Interlocked.Read(ref _started) == 1)
             {
-                return _deviceToBuf?.Grab() ?? false;
+                _deviceToBuf?.Abort();
+                _logger.LogInformation("C{0} before 开始进行采图 ", _dalsaConfig.Id);
+                var ret = _deviceToBuf?.Grab() ?? false;
+                _logger.LogInformation("C{0} finish 开始进行采图", _dalsaConfig.Id);
+                return ret;
             }
             return false;
         }
