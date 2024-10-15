@@ -5,12 +5,16 @@ do
 {
     Parallel.ForEach(Process.GetProcessesByName("CTNewGetPic"), p =>
     {
-        Console.WriteLine("当前存在采图进程未关闭");
-        p?.WaitForExit();
+        try
+        {
+            p?.WaitForExit();
+            Thread.Sleep(10000);
+        }
+        catch { }
     });
 
     var id = Guid.NewGuid().ToString();
-    using var mutex = new Mutex(true, id);
+    var mutex = new Mutex(true, id);
     using var process = Process.Start(new ProcessStartInfo()
     {
         Arguments = id,
@@ -37,6 +41,11 @@ do
             process.Close();
         }
     }
+    finally
+    {
+        mutex.Dispose();
+    }
+
     await Task.Delay(TimeSpan.FromSeconds(30));
 }
 while (await timer.WaitForNextTickAsync());

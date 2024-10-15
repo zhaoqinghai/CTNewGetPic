@@ -123,7 +123,9 @@ try
     {
         await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
     }
-    catch (OperationCanceledException) { }
+    catch (OperationCanceledException)
+    {
+    }
     new Task(() =>
     {
         foreach (var server in DefaultContainer.IOC.GetServices<IRunServer>())
